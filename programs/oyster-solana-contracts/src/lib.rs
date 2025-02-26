@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint};
 use solana_program::keccak::hash;
 
 mod lock;
@@ -11,10 +11,35 @@ const EXTRA_DECIMALS: u64 = 12; // Equivalent to 10^12
 const RATE_LOCK_SELECTOR: &[u8; 9] = b"RATE_LOCK";
 
 #[program]
-pub mod market_v1 {
-    use anchor_spl::token::{close_account, CloseAccount, TransferChecked};
-
+pub mod market_v {
     use super::*;
+
+    // Initialize the market
+    pub fn initialize(
+        ctx: Context<Initialize>,
+        admin: Pubkey,
+        selector: [u8; 32],
+        wait_time: u64,
+    ) -> Result<()> {
+        let market = &mut ctx.accounts.market;
+
+        // Set the admin authority
+        market.admin = admin;
+
+        // Set the token mint address
+        market.token_mint = ctx.accounts.token_mint.key();
+        // market.token_mint = *ctx.accounts.token_program.to_account_info().key;
+
+        // Set the job index counter
+        market.job_index = 0;
+
+        // call update_lock_wait_time instruction to set the lock wait time
+        let lock_wait_time = &mut ctx.accounts.lock_wait_time;
+        lock_wait_time.wait_time = wait_time;
+        lock::update_lock_wait_time_util(lock_wait_time, selector, wait_time)?;
+
+        Ok(())
+    }
 
     // Add a provider
     pub fn provider_add(ctx: Context<ProviderAdd>, cp: String) -> Result<()> {
@@ -94,14 +119,18 @@ pub mod market_v1 {
     pub fn update_token(ctx: Context<UpdateToken>, new_token_mint: Pubkey) -> Result<()> {
         let market = &mut ctx.accounts.market;
 
-        // Emit the TokenUpdated event
-        emit!(TokenUpdated {
-            old_token_mint: market.token_mint,
-            new_token_mint,
-        });
+        // // Emit the TokenUpdated event
+        // emit!(TokenUpdated {
+        //     old_token_mint: market.token_mint,
+        //     new_token_mint,
+        // });
 
-        // Update the token mint address
-        market.token_mint = new_token_mint;
+        // // Update the token mint address
+        // market.token_mint = new_token_mint;
+
+        // Ok(())
+
+        utils_mod::update_token_util(market, new_token_mint)?;
 
         Ok(())
     }
@@ -117,6 +146,8 @@ pub mod market_v1 {
         let market = &mut ctx.accounts.market;
         let job = &mut ctx.accounts.job;
 
+        require_keys_eq!(ctx.accounts.token_mint.key(), market.token_mint, ErrorCode::InvalidMint);
+
         // Transfer tokens from the owner to the job account
         let cpi_accounts = Transfer {
             from: ctx.accounts.owner_token_account.to_account_info(),
@@ -126,6 +157,9 @@ pub mod market_v1 {
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
         token::transfer(cpi_ctx, balance)?;
 
+        // Increment the job index
+        market.job_index += 1;
+
         // Initialize the job
         job.index = market.job_index;
         job.metadata = metadata; // Now a String
@@ -134,9 +168,6 @@ pub mod market_v1 {
         job.rate = rate;
         job.balance = balance;
         job.last_settled = Clock::get()?.unix_timestamp as u64;
-
-        // Increment the job index
-        market.job_index += 1;
 
         emit!(JobOpened {
             job: job.key(),
@@ -153,6 +184,11 @@ pub mod market_v1 {
 
     // Settle a job
     pub fn job_settle(ctx: Context<JobSettle>, job_index: u64) -> Result<()> {
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+
+        let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
+        let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
+
         // Reuse the settle_job function
         utils_mod::settle_job(
             &mut ctx.accounts.job,
@@ -160,6 +196,7 @@ pub mod market_v1 {
             &ctx.accounts.job_token_account,
             &ctx.accounts.market,
             &ctx.accounts.token_program,
+            signer_seeds,
         )?;
 
         Ok(())
@@ -175,6 +212,11 @@ pub mod market_v1 {
             ErrorCode::Unauthorized
         );
 
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+
+        let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
+        let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
+
         // Reuse the settle_job function
         utils_mod::settle_job(
             job,
@@ -182,6 +224,8 @@ pub mod market_v1 {
             &ctx.accounts.job_token_account,
             &ctx.accounts.market,
             &ctx.accounts.token_program,
+            signer_seeds,
+
         )?;
 
         // Transfer remaining balance to the owner
@@ -190,7 +234,7 @@ pub mod market_v1 {
             let cpi_accounts = Transfer {
                 from: ctx.accounts.job_token_account.to_account_info(),
                 to: owner_token_account.to_account_info(),
-                authority: ctx.accounts.market.to_account_info(),
+                authority: ctx.accounts.job_token_account.to_account_info(),
             };
             let cpi_ctx =
                 CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
@@ -224,6 +268,8 @@ pub mod market_v1 {
             job.owner != Pubkey::default(),
             ErrorCode::JobNotFound
         );
+
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
 
         // Transfer tokens from the owner to the job's token account
         let cpi_accounts = Transfer {
@@ -266,19 +312,27 @@ pub mod market_v1 {
             ErrorCode::Unauthorized
         );
 
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+
         // Ensure the job has sufficient balance
         require!(
             job.balance >= amount,
             ErrorCode::InsufficientBalance
         );
 
+        let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
+        let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
+        // let signer_seeds: &[&[&[u8]]] = &[&[b"job_token", &[ctx.bumps.job_token_account]]];
+
         // Transfer tokens from the job's token account to the owner
         let cpi_accounts = Transfer {
             from: ctx.accounts.job_token_account.to_account_info(),
             to: ctx.accounts.owner_token_account.to_account_info(),
-            authority: ctx.accounts.market.to_account_info(),
+            authority: ctx.accounts.job_token_account.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(), cpi_accounts
+        ).with_signer(signer_seeds);
         token::transfer(cpi_ctx, amount)?;
 
         // Update the job's balance
@@ -339,7 +393,7 @@ pub mod market_v1 {
             &mut ctx.accounts.lock,
             ctx.accounts.lock_wait_time.wait_time,
             selector,
-            selector,
+            key,
             new_rate
         )?;
 
@@ -377,7 +431,7 @@ pub mod market_v1 {
         //     selector,
         //     key
         // )?;
-        lock::revert_lock_util(selector, selector, ctx.accounts.lock.i_value)?;
+        lock::revert_lock_util(selector, key, ctx.accounts.lock.i_value)?;
     
         emit!(JobReviseRateCancelled {
             job: ctx.accounts.job.key(),
@@ -412,7 +466,7 @@ pub mod market_v1 {
         //     selector,
         //     key
         // )?;
-        let new_rate = lock::unlock_util(selector, selector, ctx.accounts.lock.i_value, ctx.accounts.lock.unlock_time)?;
+        let new_rate = lock::unlock_util(selector, key, ctx.accounts.lock.i_value, ctx.accounts.lock.unlock_time)?;
     
         emit!(JobReviseRateFinalized {
             job: ctx.accounts.job.key(),
@@ -423,15 +477,34 @@ pub mod market_v1 {
     }    
 
     mod utils_mod {
+        use anchor_lang::accounts::signer;
+
         use super::*;
 
+        pub fn update_token_util<'info>(
+            market: &mut Account<'info, Market>,
+            new_token_mint: Pubkey,
+        ) -> Result<()> {
+            // Emit the TokenUpdated event
+            emit!(TokenUpdated {
+                old_token_mint: market.token_mint,
+                new_token_mint,
+            });
+
+            // Update the token mint address
+            market.token_mint = new_token_mint;
+
+            Ok(())
+        }
+
         // Reusable function to settle a job
-        pub(in crate::market_v1) fn settle_job<'info>(
+        pub(in crate::market_v) fn settle_job<'info>(
             job: &mut Account<'info, Job>,
             provider_token_account: &Account<'info, TokenAccount>,
             job_token_account: &Account<'info, TokenAccount>,
             market: &Account<'info, Market>,
             token_program: &Program<'info, Token>,
+            signer_seeds: &[&[&[u8]]],
         ) -> Result<()> {
             // Calculate usage duration
             let usage_duration = Clock::get()?.unix_timestamp as u64 - job.last_settled;
@@ -451,9 +524,11 @@ pub mod market_v1 {
             let cpi_accounts = Transfer {
                 from: job_token_account.to_account_info(),
                 to: provider_token_account.to_account_info(),
-                authority: market.to_account_info(),
+                authority: job_token_account.to_account_info(),
             };
-            let cpi_ctx = CpiContext::new(token_program.to_account_info(), cpi_accounts);
+            let cpi_ctx = CpiContext::new(
+                token_program.to_account_info(), cpi_accounts
+            ).with_signer(signer_seeds);
             token::transfer(cpi_ctx, amount)?;
 
             // Update the last settled timestamp
@@ -505,11 +580,37 @@ pub struct Job {
 
 // Contexts
 #[derive(Accounts)]
+#[instruction(selector: [u8; 32], wait_time: u64)]
 pub struct Initialize<'info> {
     #[account(init, payer = admin, space = 8 + std::mem::size_of::<Market>())]
     pub market: Account<'info, Market>,
+
     #[account(mut)]
     pub admin: Signer<'info>,
+
+    #[account(mut)]
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(
+        init,
+        payer = admin,
+        seeds = [b"job_token", market.token_mint.as_ref()],
+        bump,
+        token::mint = token_mint,
+        token::authority = job_token_account
+    )]
+    pub job_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + lock::LockWaitTime::INIT_SPACE,
+        seeds = [b"lock_wait_time", selector.as_ref()],
+        bump
+    )]
+    pub lock_wait_time: Account<'info, lock::LockWaitTime>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -596,9 +697,12 @@ pub struct JobOpen<'info> {
     pub owner: Signer<'info>,
 
     #[account(mut)]
-    pub owner_token_account: Account<'info, TokenAccount>,
+    pub token_mint: Account<'info, Mint>,
 
     #[account(mut)]
+    pub owner_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
@@ -618,6 +722,9 @@ pub struct JobSettle<'info> {
     pub job: Account<'info, Job>,
 
     #[account(mut)]
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
     #[account(mut)]
@@ -642,6 +749,9 @@ pub struct JobClose<'info> {
     pub job: Account<'info, Job>,
 
     #[account(mut)]
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
     #[account(mut)]
@@ -663,6 +773,9 @@ pub struct JobClose<'info> {
 #[derive(Accounts)]
 #[instruction(job_index: u64, amount: u64)]
 pub struct JobDeposit<'info> {
+    #[account(mut)]
+    pub market: Account<'info, Market>,
+
     #[account(
         mut,
         seeds = [b"job", job_index.to_le_bytes().as_ref()], // Use job_index as seed
@@ -674,9 +787,12 @@ pub struct JobDeposit<'info> {
     pub owner: Signer<'info>,
 
     #[account(mut)]
-    pub owner_token_account: Account<'info, TokenAccount>,
+    pub token_mint: Account<'info, Mint>,
 
     #[account(mut)]
+    pub owner_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
@@ -697,9 +813,12 @@ pub struct JobWithdraw<'info> {
     pub owner: Signer<'info>,
 
     #[account(mut)]
-    pub owner_token_account: Account<'info, TokenAccount>,
+    pub token_mint: Account<'info, Mint>,
 
     #[account(mut)]
+    pub owner_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
     #[account(mut)]
@@ -832,8 +951,6 @@ pub struct JobClosed {
     pub job: Pubkey,
 }
 
-
-// Events
 #[event]
 pub struct JobDeposited {
     pub job: Pubkey,
@@ -848,7 +965,6 @@ pub struct JobWithdrew {
     pub amount: u64,
 }
 
-// Events
 #[event]
 pub struct JobReviseRateInitiated {
     pub job: Pubkey,
@@ -881,4 +997,6 @@ pub enum ErrorCode {
     JobNotFound,
     #[msg("Insufficient balance")]
     InsufficientBalance,
+    #[msg("Invalid mint")]
+    InvalidMint,
 }

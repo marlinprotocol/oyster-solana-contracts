@@ -6,7 +6,7 @@ pub mod lock_program {
     pub fn create_lock(
         ctx: Context<CreateLock>,
         selector: [u8; 32],
-        key: [u8; 32],
+        key: [u8; 8],
         i_value: u64
     ) -> Result<()> {
         // let lock = &mut ctx.accounts.lock;
@@ -35,7 +35,7 @@ pub mod lock_program {
     pub fn revert_lock(
         ctx: Context<RevertLock>,
         selector: [u8; 32],
-        key: [u8; 32]
+        key: [u8; 8]
     ) -> Result<u64> {
         // let i_value = ctx.accounts.lock.i_value;
         // **ctx.accounts.lock.to_account_info().try_borrow_mut_lamports()? -= ctx.accounts.lock.to_account_info().lamports();
@@ -53,7 +53,7 @@ pub mod lock_program {
     pub fn unlock(
         ctx: Context<Unlock>,
         selector: [u8; 32],
-        key: [u8; 32]
+        key: [u8; 8]
     ) -> Result<u64> {
         let i_value = unlock_util(selector, key, ctx.accounts.lock.i_value, ctx.accounts.lock.unlock_time)?;
         Ok(i_value)
@@ -62,8 +62,8 @@ pub mod lock_program {
     pub fn clone_lock(
         ctx: Context<CloneLock>,
         selector: [u8; 32],
-        from_key: [u8; 32],
-        to_key: [u8; 32]
+        from_key: [u8; 8],
+        to_key: [u8; 8]
     ) -> Result<()> {
         let from_lock = &ctx.accounts.from_lock;
         let to_lock = &mut ctx.accounts.to_lock;
@@ -86,13 +86,15 @@ pub mod lock_program {
         new_wait_time: u64
     ) -> Result<()> {
         let lock_wait_time = &mut ctx.accounts.lock_wait_time;
-        emit!(LockWaitTimeUpdated {
-            selector: selector,
-            prev_lock_time: lock_wait_time.wait_time,
-            updated_lock_time: new_wait_time
-        });
+        // emit!(LockWaitTimeUpdated {
+        //     selector: selector,
+        //     prev_lock_time: lock_wait_time.wait_time,
+        //     updated_lock_time: new_wait_time
+        // });
 
-        lock_wait_time.wait_time = new_wait_time;
+        // lock_wait_time.wait_time = new_wait_time;
+
+        update_lock_wait_time_util(lock_wait_time, selector, new_wait_time)?;
 
         Ok(())
     }
@@ -102,7 +104,7 @@ pub fn create_lock_util(
     lock: &mut Account<'_, Lock>,
     wait_time: u64,
     selector: [u8; 32],
-    key: [u8; 32],
+    key: [u8; 8],
     i_value: u64
 ) -> Result<()> {
     require!(lock.unlock_time == 0, ErrorCode::LockAlreadyExists);
@@ -123,7 +125,7 @@ pub fn create_lock_util(
 
 pub fn revert_lock_util(
     selector: [u8; 32],
-    key: [u8; 32],
+    key: [u8; 8],
     i_value: u64
 ) -> Result<u64> {
     emit!(LockDeleted {
@@ -137,7 +139,7 @@ pub fn revert_lock_util(
 
 pub fn unlock_util(
     selector: [u8; 32],
-    key: [u8; 32],
+    key: [u8; 8],
     i_value: u64,
     unlock_time: u64,
 ) -> Result<u64> {
@@ -149,9 +151,24 @@ pub fn unlock_util(
     Ok(i_value)
 }
 
+pub fn update_lock_wait_time_util(
+    lock_wait_time: &mut Account<'_, LockWaitTime>,
+    selector: [u8; 32],
+    new_wait_time: u64
+) -> Result<()> {
+    emit!(LockWaitTimeUpdated {
+        selector: selector,
+        prev_lock_time: lock_wait_time.wait_time,
+        updated_lock_time: new_wait_time
+    });
+
+    lock_wait_time.wait_time = new_wait_time;
+
+    Ok(())
+}
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], key: [u8; 32])]
+#[instruction(selector: [u8; 32], key: [u8; 8])]
 pub struct CreateLock<'info> {
     #[account(
         init,
@@ -173,7 +190,7 @@ pub struct CreateLock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], key: [u8; 32])]
+#[instruction(selector: [u8; 32], key: [u8; 8])]
 pub struct RevertLock<'info> {
     #[account(
         mut,
@@ -187,7 +204,7 @@ pub struct RevertLock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], key: [u8; 32])]
+#[instruction(selector: [u8; 32], key: [u8; 8])]
 pub struct Unlock<'info> {
     #[account(
         mut,
@@ -201,7 +218,7 @@ pub struct Unlock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], from_key: [u8; 32], to_key: [u8; 32])]
+#[instruction(selector: [u8; 32], from_key: [u8; 8], to_key: [u8; 8])]
 pub struct CloneLock<'info> {
     #[account(
         seeds = [b"lock", selector.as_ref(), from_key.as_ref()],
@@ -262,7 +279,7 @@ pub struct LockWaitTimeUpdated {
 #[event]
 pub struct LockCreated {
     pub selector: [u8; 32],
-    pub key: [u8; 32],
+    pub key: [u8; 8],
     pub i_value: u64,
     pub unlock_time: u64,
 }
@@ -270,7 +287,7 @@ pub struct LockCreated {
 #[event]
 pub struct LockDeleted {
     pub selector: [u8; 32],
-    pub key: [u8; 32],
+    pub key: [u8; 8],
     pub i_value: u64,
 }
 
