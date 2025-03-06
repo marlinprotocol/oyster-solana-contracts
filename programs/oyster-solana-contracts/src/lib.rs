@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint};
-use solana_program::keccak::hash;
+// use solana_program::keccak::hash;
 
 mod lock;
 
@@ -8,7 +8,7 @@ declare_id!("E87qEpEEcTk2bfN1CQqaC9qtm7zH7xCkSAm6qj6oaAcd");
 
 // Define EXTRA_DECIMALS as a constant
 const EXTRA_DECIMALS: u64 = 12; // Equivalent to 10^12
-const RATE_LOCK_SELECTOR: &[u8; 9] = b"RATE_LOCK";
+const RATE_LOCK_SELECTOR: &str = "RATE_LOCK";
 
 #[program]
 pub mod market_v {
@@ -17,9 +17,9 @@ pub mod market_v {
     // Initialize the market
     pub fn initialize(
         ctx: Context<Initialize>,
-        admin: Pubkey,
-        selector: [u8; 32],
+        selector: String,
         wait_time: u64,
+        admin: Pubkey,
     ) -> Result<()> {
         let market = &mut ctx.accounts.market;
 
@@ -35,7 +35,7 @@ pub mod market_v {
 
         // call update_lock_wait_time instruction to set the lock wait time
         let lock_wait_time = &mut ctx.accounts.lock_wait_time;
-        lock_wait_time.wait_time = wait_time;
+        // lock_wait_time.wait_time = wait_time;
         lock::update_lock_wait_time_util(lock_wait_time, selector, wait_time)?;
 
         Ok(())
@@ -46,10 +46,10 @@ pub mod market_v {
         let provider = &mut ctx.accounts.provider;
 
         // Check 1: Ensure the provider does not already exist
-        require!(provider.cp.is_empty(), ErrorCode::ProviderAlreadyExists);
+        require!(provider.cp.is_empty(), ErrorCodes::ProviderAlreadyExists);
 
         // Check 2: Ensure the control plane URL is not empty
-        require!(!cp.is_empty(), ErrorCode::InvalidControlPlaneUrl);
+        require!(!cp.is_empty(), ErrorCodes::InvalidControlPlaneUrl);
 
         // Set the control plane URL and authority
         provider.cp = cp;
@@ -71,18 +71,18 @@ pub mod market_v {
 
         require!(
             ctx.accounts.provider.key() == expected_provider_key,
-            ErrorCode::Unauthorized
+            ErrorCodes::Unauthorized
         );
 
-        // Close the provider account
-        let provider_account = ctx.accounts.provider.to_account_info();
-        let authority = ctx.accounts.authority.to_account_info();
+        // // Close the provider account
+        // let provider_account = ctx.accounts.provider.to_account_info();
+        // let authority = ctx.accounts.authority.to_account_info();
 
-        // Refund the rent to the authority
-        let rent = Rent::get()?;
-        let lamports = provider_account.lamports();
-        **provider_account.lamports.borrow_mut() = 0;
-        **authority.lamports.borrow_mut() += lamports;
+        // // Refund the rent to the authority
+        // let rent = Rent::get()?;
+        // let lamports = provider_account.lamports();
+        // **provider_account.lamports.borrow_mut() = 0;
+        // **authority.lamports.borrow_mut() += lamports;
 
         emit!(ProviderRemoved {
             provider: *ctx.accounts.authority.key,
@@ -99,10 +99,10 @@ pub mod market_v {
         let provider = &mut ctx.accounts.provider;
 
         // Check 1: Ensure the provider exists
-        require!(!provider.cp.is_empty(), ErrorCode::ProviderNotFound);
+        require!(!provider.cp.is_empty(), ErrorCodes::ProviderNotFound);
 
         // Check 2: Ensure the new control plane URL is not empty
-        require!(!new_cp.is_empty(), ErrorCode::InvalidControlPlaneUrl);
+        require!(!new_cp.is_empty(), ErrorCodes::InvalidControlPlaneUrl);
 
         // Update the control plane URL
         provider.cp = new_cp;
@@ -146,7 +146,7 @@ pub mod market_v {
         let market = &mut ctx.accounts.market;
         let job = &mut ctx.accounts.job;
 
-        require_keys_eq!(ctx.accounts.token_mint.key(), market.token_mint, ErrorCode::InvalidMint);
+        require_keys_eq!(ctx.accounts.token_mint.key(), market.token_mint, ErrorCodes::InvalidMint);
 
         // Transfer tokens from the owner to the job account
         let cpi_accounts = Transfer {
@@ -154,7 +154,10 @@ pub mod market_v {
             to: ctx.accounts.job_token_account.to_account_info(),
             authority: ctx.accounts.owner.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_accounts
+        );
         token::transfer(cpi_ctx, balance)?;
 
         // Increment the job index
@@ -184,7 +187,7 @@ pub mod market_v {
 
     // Settle a job
     pub fn job_settle(ctx: Context<JobSettle>, job_index: u64) -> Result<()> {
-        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCodes::InvalidMint);
 
         let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
         let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
@@ -209,10 +212,10 @@ pub mod market_v {
         // Ensure the caller is the owner of the job
         require!(
             job.owner == *ctx.accounts.owner.key,
-            ErrorCode::Unauthorized
+            ErrorCodes::Unauthorized
         );
 
-        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCodes::InvalidMint);
 
         let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
         let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
@@ -266,10 +269,10 @@ pub mod market_v {
         // Ensure the job exists
         require!(
             job.owner != Pubkey::default(),
-            ErrorCode::JobNotFound
+            ErrorCodes::JobNotFound
         );
 
-        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCodes::InvalidMint);
 
         // Transfer tokens from the owner to the job's token account
         let cpi_accounts = Transfer {
@@ -303,21 +306,21 @@ pub mod market_v {
         // Ensure the job exists
         require!(
             job.owner != Pubkey::default(),
-            ErrorCode::JobNotFound
+            ErrorCodes::JobNotFound
         );
 
         // Ensure the caller is the job owner
         require!(
             job.owner == *ctx.accounts.owner.key,
-            ErrorCode::Unauthorized
+            ErrorCodes::Unauthorized
         );
 
-        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCode::InvalidMint);
+        require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCodes::InvalidMint);
 
         // Ensure the job has sufficient balance
         require!(
             job.balance >= amount,
-            ErrorCode::InsufficientBalance
+            ErrorCodes::InsufficientBalance
         );
 
         let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
@@ -353,15 +356,14 @@ pub mod market_v {
         job_index: u64, // Job index to identify the job
         new_rate: u64,  // New rate to propose
     ) -> Result<()> {
-        let selector = utils_mod::get_rate_lock_selector();
-        let key = job_index.to_le_bytes(); // Convert job_index to bytes
+        let selector = String::from(RATE_LOCK_SELECTOR);
 
         let job = &mut ctx.accounts.job;
 
         // Ensure the caller is the job owner
         require!(
             job.owner == *ctx.accounts.owner.key,
-            ErrorCode::Unauthorized
+            ErrorCodes::Unauthorized
         );
 
         // Set the proposed rate
@@ -393,7 +395,7 @@ pub mod market_v {
             &mut ctx.accounts.lock,
             ctx.accounts.lock_wait_time.wait_time,
             selector,
-            key,
+            job_index,
             new_rate
         )?;
 
@@ -409,11 +411,10 @@ pub mod market_v {
         ctx: Context<JobReviseRateCancel>,
         job_index: u64,
     ) -> Result<()> {
-        let selector = utils_mod::get_rate_lock_selector();
-        let key = job_index.to_le_bytes(); // Convert job index (u64) to [u8; 32]
+        let selector = String::from(RATE_LOCK_SELECTOR);
     
         // Ensure only the job owner can cancel
-        require_keys_eq!(ctx.accounts.job.owner, ctx.accounts.user.key(), ErrorCode::Unauthorized);
+        require_keys_eq!(ctx.accounts.job.owner, ctx.accounts.user.key(), ErrorCodes::Unauthorized);
     
         // Call revert_lock in lock_program
         // let i_value = lock::lock_program::revert_lock(
@@ -431,7 +432,7 @@ pub mod market_v {
         //     selector,
         //     key
         // )?;
-        lock::revert_lock_util(selector, key, ctx.accounts.lock.i_value)?;
+        lock::revert_lock_util(selector, job_index, ctx.accounts.lock.i_value)?;
     
         emit!(JobReviseRateCancelled {
             job: ctx.accounts.job.key(),
@@ -444,11 +445,10 @@ pub mod market_v {
         ctx: Context<JobReviseRateFinalize>,
         job_index: u64,
     ) -> Result<()> {
-        let selector = utils_mod::get_rate_lock_selector();
-        let key = job_index.to_le_bytes(); // Convert job index (u64) to [u8; 32]
+        let selector = String::from(RATE_LOCK_SELECTOR);
     
         // Ensure only the job owner can cancel
-        require_keys_eq!(ctx.accounts.job.owner, ctx.accounts.user.key(), ErrorCode::Unauthorized);
+        require_keys_eq!(ctx.accounts.job.owner, ctx.accounts.user.key(), ErrorCodes::Unauthorized);
     
         // Call revert_lock in lock_program
         // let i_value = lock::lock_program::revert_lock(
@@ -466,7 +466,7 @@ pub mod market_v {
         //     selector,
         //     key
         // )?;
-        let new_rate = lock::unlock_util(selector, key, ctx.accounts.lock.i_value, ctx.accounts.lock.unlock_time)?;
+        let new_rate = lock::unlock_util(selector, job_index, ctx.accounts.lock.i_value, ctx.accounts.lock.unlock_time)?;
     
         emit!(JobReviseRateFinalized {
             job: ctx.accounts.job.key(),
@@ -543,10 +543,10 @@ pub mod market_v {
             Ok(())
         }
 
-        pub fn get_rate_lock_selector() -> [u8; 32] {
-            let hash_result = hash(b"RATE_LOCK");
-            hash_result.to_bytes()
-        }
+        // pub fn get_rate_lock_selector() -> [u8; 32] {
+        //     let hash_result = hash(b"RATE_LOCK");
+        //     hash_result.to_bytes()
+        // }
 
     }
 
@@ -580,7 +580,7 @@ pub struct Job {
 
 // Contexts
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], wait_time: u64)]
+#[instruction(selector: String)]
 pub struct Initialize<'info> {
     #[account(init, payer = admin, space = 8 + std::mem::size_of::<Market>())]
     pub market: Account<'info, Market>,
@@ -594,7 +594,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = admin,
-        seeds = [b"job_token", market.token_mint.as_ref()],
+        seeds = [b"job_token", token_mint.key().as_ref()],
         bump,
         token::mint = token_mint,
         token::authority = job_token_account
@@ -604,8 +604,12 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = admin,
-        space = 8 + lock::LockWaitTime::INIT_SPACE,
-        seeds = [b"lock_wait_time", selector.as_ref()],
+        // space = 8 + lock::LockWaitTime::INIT_SPACE,
+        space = 8 + std::mem::size_of::<lock::LockWaitTime>(),
+        // seeds = [b"lock_wait_time", selector.as_bytes().as_ref()],
+        // seeds = [&wait_time.to_le_bytes()],
+        seeds = [b"lock_wait_time", selector.as_bytes().as_ref()],
+        // seeds = [b"lock_wait_time"],
         bump
     )]
     pub lock_wait_time: Account<'info, lock::LockWaitTime>,
@@ -671,7 +675,7 @@ pub struct ProviderUpdateWithCp<'info> {
 // Context for updating the token mint address
 #[derive(Accounts)]
 pub struct UpdateToken<'info> {
-    #[account(mut, has_one = admin @ ErrorCode::Unauthorized)]
+    #[account(mut, has_one = admin @ ErrorCodes::Unauthorized)]
     pub market: Account<'info, Market>,
 
     #[account(mut)]
@@ -846,13 +850,13 @@ pub struct JobReviseRateInitiate<'info> {
         init,
         payer = owner,
         space = 8 + lock::Lock::INIT_SPACE,
-        seeds = [b"lock", hash(RATE_LOCK_SELECTOR).to_bytes().as_ref(), job_index.to_le_bytes().as_ref()],
+        seeds = [b"lock", RATE_LOCK_SELECTOR.as_bytes().as_ref(), job_index.to_le_bytes().as_ref()],
         bump
     )]
     pub lock: Account<'info, lock::Lock>,
 
     #[account(
-        seeds = [b"lock_wait_time", hash(RATE_LOCK_SELECTOR).to_bytes().as_ref()],
+        seeds = [b"lock_wait_time", RATE_LOCK_SELECTOR.as_bytes().as_ref()],
         bump
     )]
     pub lock_wait_time: Account<'info, lock::LockWaitTime>,
@@ -873,7 +877,7 @@ pub struct JobReviseRateCancel<'info> {
     #[account(
         mut,
         close = user,
-        seeds = [b"lock", hash(RATE_LOCK_SELECTOR).to_bytes().as_ref(), job_index.to_le_bytes().as_ref()],
+        seeds = [b"lock", RATE_LOCK_SELECTOR.as_bytes().as_ref(), job_index.to_le_bytes().as_ref()],
         bump
     )]
     pub lock: Account<'info, lock::Lock>,
@@ -895,7 +899,7 @@ pub struct JobReviseRateFinalize<'info> {
     #[account(
         mut,
         close = user,
-        seeds = [b"lock", hash(RATE_LOCK_SELECTOR).to_bytes().as_ref(), job_index.to_le_bytes().as_ref()],
+        seeds = [b"lock", RATE_LOCK_SELECTOR.as_bytes().as_ref(), job_index.to_le_bytes().as_ref()],
         bump
     )]
     pub lock: Account<'info, lock::Lock>,
@@ -984,7 +988,7 @@ pub struct JobReviseRateFinalized {
 
 // Error codes
 #[error_code]
-pub enum ErrorCode {
+pub enum ErrorCodes {
     #[msg("Provider already exists")]
     ProviderAlreadyExists,
     #[msg("Invalid control plane URL")]

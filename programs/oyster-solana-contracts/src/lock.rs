@@ -5,8 +5,8 @@ pub mod lock_program {
 
     pub fn create_lock(
         ctx: Context<CreateLock>,
-        selector: [u8; 32],
-        key: [u8; 8],
+        selector: String,
+        key: u64,
         i_value: u64
     ) -> Result<()> {
         // let lock = &mut ctx.accounts.lock;
@@ -34,8 +34,8 @@ pub mod lock_program {
 
     pub fn revert_lock(
         ctx: Context<RevertLock>,
-        selector: [u8; 32],
-        key: [u8; 8]
+        selector: String,
+        key: u64
     ) -> Result<u64> {
         // let i_value = ctx.accounts.lock.i_value;
         // **ctx.accounts.lock.to_account_info().try_borrow_mut_lamports()? -= ctx.accounts.lock.to_account_info().lamports();
@@ -52,8 +52,8 @@ pub mod lock_program {
 
     pub fn unlock(
         ctx: Context<Unlock>,
-        selector: [u8; 32],
-        key: [u8; 8]
+        selector: String,
+        key: u64
     ) -> Result<u64> {
         let i_value = unlock_util(selector, key, ctx.accounts.lock.i_value, ctx.accounts.lock.unlock_time)?;
         Ok(i_value)
@@ -61,9 +61,9 @@ pub mod lock_program {
 
     pub fn clone_lock(
         ctx: Context<CloneLock>,
-        selector: [u8; 32],
-        from_key: [u8; 8],
-        to_key: [u8; 8]
+        selector: String,
+        from_key: u64,
+        to_key: u64
     ) -> Result<()> {
         let from_lock = &ctx.accounts.from_lock;
         let to_lock = &mut ctx.accounts.to_lock;
@@ -82,7 +82,7 @@ pub mod lock_program {
 
     pub fn update_lock_wait_time(
         ctx: Context<UpdateLockWaitTime>,
-        selector: [u8; 32],
+        selector: String,
         new_wait_time: u64
     ) -> Result<()> {
         let lock_wait_time = &mut ctx.accounts.lock_wait_time;
@@ -103,8 +103,8 @@ pub mod lock_program {
 pub fn create_lock_util(
     lock: &mut Account<'_, Lock>,
     wait_time: u64,
-    selector: [u8; 32],
-    key: [u8; 8],
+    selector: String,
+    key: u64,
     i_value: u64
 ) -> Result<()> {
     require!(lock.unlock_time == 0, ErrorCode::LockAlreadyExists);
@@ -124,8 +124,8 @@ pub fn create_lock_util(
 }
 
 pub fn revert_lock_util(
-    selector: [u8; 32],
-    key: [u8; 8],
+    selector: String,
+    key: u64,
     i_value: u64
 ) -> Result<u64> {
     emit!(LockDeleted {
@@ -138,8 +138,8 @@ pub fn revert_lock_util(
 }
 
 pub fn unlock_util(
-    selector: [u8; 32],
-    key: [u8; 8],
+    selector: String,
+    key: u64,
     i_value: u64,
     unlock_time: u64,
 ) -> Result<u64> {
@@ -153,7 +153,7 @@ pub fn unlock_util(
 
 pub fn update_lock_wait_time_util(
     lock_wait_time: &mut Account<'_, LockWaitTime>,
-    selector: [u8; 32],
+    selector: String,
     new_wait_time: u64
 ) -> Result<()> {
     emit!(LockWaitTimeUpdated {
@@ -168,19 +168,19 @@ pub fn update_lock_wait_time_util(
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], key: [u8; 8])]
+#[instruction(selector: String, key: u64)]
 pub struct CreateLock<'info> {
     #[account(
         init,
         payer = user,
         space = 8 + Lock::INIT_SPACE,
-        seeds = [b"lock", selector.as_ref(), key.as_ref()],
+        seeds = [b"lock", selector.as_bytes().as_ref(), key.to_le_bytes().as_ref()],
         bump
     )]
     pub lock: Account<'info, Lock>,
 
     #[account(
-        seeds = [b"lock_wait_time", selector.as_ref()],
+        seeds = [b"lock_wait_time", selector.as_bytes().as_ref()],
         bump
     )]
     pub lock_wait_time: Account<'info, LockWaitTime>,
@@ -190,12 +190,12 @@ pub struct CreateLock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], key: [u8; 8])]
+#[instruction(selector: String, key: u64)]
 pub struct RevertLock<'info> {
     #[account(
         mut,
         close = user,
-        seeds = [b"lock", selector.as_ref(), key.as_ref()],
+        seeds = [b"lock", selector.as_bytes().as_ref(), key.to_le_bytes().as_ref()],
         bump
     )]
     pub lock: Account<'info, Lock>,
@@ -204,12 +204,12 @@ pub struct RevertLock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], key: [u8; 8])]
+#[instruction(selector: String, key: u64)]
 pub struct Unlock<'info> {
     #[account(
         mut,
         close = user,
-        seeds = [b"lock", selector.as_ref(), key.as_ref()],
+        seeds = [b"lock", selector.as_bytes().as_ref(), key.to_le_bytes().as_ref()],
         bump
     )]
     pub lock: Account<'info, Lock>,
@@ -218,10 +218,10 @@ pub struct Unlock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32], from_key: [u8; 8], to_key: [u8; 8])]
+#[instruction(selector: String, from_key: u64, to_key: u64)]
 pub struct CloneLock<'info> {
     #[account(
-        seeds = [b"lock", selector.as_ref(), from_key.as_ref()],
+        seeds = [b"lock", selector.as_bytes().as_ref(), from_key.to_le_bytes().as_ref()],
         bump
     )]
     pub from_lock: Account<'info, Lock>,
@@ -229,7 +229,7 @@ pub struct CloneLock<'info> {
         init,
         payer = user,
         space = 8 + Lock::INIT_SPACE,
-        seeds = [b"lock", selector.as_ref(), to_key.as_ref()],
+        seeds = [b"lock", selector.as_bytes().as_ref(), to_key.to_le_bytes().as_ref()],
         bump
     )]
     pub to_lock: Account<'info, Lock>,
@@ -239,13 +239,13 @@ pub struct CloneLock<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(selector: [u8; 32])]
+#[instruction(selector: String)]
 pub struct UpdateLockWaitTime<'info> {
     #[account(
         init_if_needed,
         payer = user,
         space = 8 + LockWaitTime::INIT_SPACE,
-        seeds = [b"lock_wait_time", selector.as_ref()],
+        seeds = [b"lock_wait_time", selector.as_bytes().as_ref()],
         bump
     )]
     pub lock_wait_time: Account<'info, LockWaitTime>,
@@ -271,23 +271,23 @@ pub struct LockWaitTime {
 
 #[event]
 pub struct LockWaitTimeUpdated {
-    pub selector: [u8; 32],
+    pub selector: String,
     pub prev_lock_time: u64,
     pub updated_lock_time: u64,
 }
 
 #[event]
 pub struct LockCreated {
-    pub selector: [u8; 32],
-    pub key: [u8; 8],
+    pub selector: String,
+    pub key: u64,
     pub i_value: u64,
     pub unlock_time: u64,
 }
 
 #[event]
 pub struct LockDeleted {
-    pub selector: [u8; 32],
-    pub key: [u8; 8],
+    pub selector: String,
+    pub key: u64,
     pub i_value: u64,
 }
 

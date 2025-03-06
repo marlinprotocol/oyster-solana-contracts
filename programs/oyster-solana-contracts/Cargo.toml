@@ -6,7 +6,8 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "oyster_solana_contracts"
+name = "market_v"
+# name = "oyster_solana_contracts"
 
 [features]
 default = []
