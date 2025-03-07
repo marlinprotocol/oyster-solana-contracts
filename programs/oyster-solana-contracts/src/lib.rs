@@ -554,7 +554,9 @@ pub mod market_v {
 
 // Provider account
 #[account]
+#[derive(InitSpace)]
 pub struct Provider {
+    #[max_len(100)]
     pub cp: String,
 }
 
@@ -568,8 +570,10 @@ pub struct Market {
 
 // Job account
 #[account]
+#[derive(InitSpace)]
 pub struct Job {
     pub index: u64,        // Job index
+    #[max_len(150)]
     pub metadata: String,  // Job metadata (now a String)
     pub owner: Pubkey,     // Job owner
     pub provider: Pubkey,  // Job provider
@@ -582,7 +586,13 @@ pub struct Job {
 #[derive(Accounts)]
 #[instruction(selector: String)]
 pub struct Initialize<'info> {
-    #[account(init, payer = admin, space = 8 + std::mem::size_of::<Market>())]
+    #[account(
+        init,
+        payer = admin,
+        seeds = [b"market"],
+        bump,
+        space = 8 + std::mem::size_of::<Market>()
+    )]
     pub market: Account<'info, Market>,
 
     #[account(mut)]
@@ -625,7 +635,7 @@ pub struct ProviderAdd<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + std::mem::size_of::<Provider>(),
+        space = 8 + Provider::INIT_SPACE,
         seeds = [b"provider", authority.key().as_ref()],
         bump
     )]
@@ -675,7 +685,12 @@ pub struct ProviderUpdateWithCp<'info> {
 // Context for updating the token mint address
 #[derive(Accounts)]
 pub struct UpdateToken<'info> {
-    #[account(mut, has_one = admin @ ErrorCodes::Unauthorized)]
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump,
+        has_one = admin @ ErrorCodes::Unauthorized
+    )]
     pub market: Account<'info, Market>,
 
     #[account(mut)]
@@ -685,14 +700,18 @@ pub struct UpdateToken<'info> {
 // Context for opening a job
 #[derive(Accounts)]
 pub struct JobOpen<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump
+    )]
     pub market: Account<'info, Market>,
 
     #[account(
         init,
         payer = owner,
-        space = 8 + std::mem::size_of::<Job>(),
-        seeds = [b"job", market.job_index.to_le_bytes().as_ref()], // Use job_index as seed
+        space = 8 + Job::INIT_SPACE,
+        seeds = [b"job", (market.job_index + 1).to_le_bytes().as_ref()], // Use job_index as seed
         bump
     )]
     pub job: Account<'info, Job>,
@@ -734,7 +753,11 @@ pub struct JobSettle<'info> {
     #[account(mut)]
     pub provider_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump
+    )]
     pub market: Account<'info, Market>,
 
     pub token_program: Program<'info, Token>,
@@ -764,7 +787,11 @@ pub struct JobClose<'info> {
     #[account(mut)]
     pub provider_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump
+    )]
     pub market: Account<'info, Market>,
 
     #[account(mut)]
@@ -777,7 +804,11 @@ pub struct JobClose<'info> {
 #[derive(Accounts)]
 #[instruction(job_index: u64, amount: u64)]
 pub struct JobDeposit<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump
+    )]
     pub market: Account<'info, Market>,
 
     #[account(
@@ -825,7 +856,11 @@ pub struct JobWithdraw<'info> {
     #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump
+    )]
     pub market: Account<'info, Market>,
 
     pub token_program: Program<'info, Token>,
