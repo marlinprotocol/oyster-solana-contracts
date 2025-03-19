@@ -189,7 +189,8 @@ pub mod market_v {
     pub fn job_settle(ctx: Context<JobSettle>, job_index: u64) -> Result<()> {
         require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCodes::InvalidMint);
 
-        let seeds: &[&[u8]] = &[b"job_token", &[ctx.bumps.job_token_account]];
+        let token_mint_key = ctx.accounts.token_mint.key();
+        let seeds: &[&[u8]] = &[b"job_token", token_mint_key.as_ref(), &[ctx.bumps.job_token_account]];
         let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
 
         // Reuse the settle_job function
@@ -252,6 +253,8 @@ pub mod market_v {
         // let lamports = job_account.lamports();
         // **job_account.lamports.borrow_mut() = 0;
         // **owner.lamports.borrow_mut() += lamports;
+
+        lock::revert_lock_util(String::from(RATE_LOCK_SELECTOR), job.index, ctx.accounts.lock.i_value)?;
 
         emit!(JobClosed { job: job.key() });
 
@@ -740,7 +743,8 @@ pub struct JobSettle<'info> {
     #[account(
         mut,
         seeds = [b"job", job_index.to_le_bytes().as_ref()], // Use job_index as seed
-        bump
+        bump,
+        constraint = job.index == job_index
     )]
     pub job: Account<'info, Job>,
 
@@ -750,7 +754,10 @@ pub struct JobSettle<'info> {
     #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = provider_token_account.owner == job.provider,
+    )]
     pub provider_token_account: Account<'info, TokenAccount>,
 
     #[account(
@@ -771,7 +778,8 @@ pub struct JobClose<'info> {
         mut,
         close = owner,
         seeds = [b"job", job_index.to_le_bytes().as_ref()], // Use job_index as seed
-        bump
+        bump,
+        constraint = job.index == job_index
     )] // Close the job account and refund rent to the owner
     pub job: Account<'info, Job>,
 
@@ -781,10 +789,16 @@ pub struct JobClose<'info> {
     #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub job_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = owner_token_account.owner == job.owner,
+    )]
     pub owner_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = provider_token_account.owner == job.provider
+    )]
     pub provider_token_account: Account<'info, TokenAccount>,
 
     #[account(
@@ -793,6 +807,14 @@ pub struct JobClose<'info> {
         bump
     )]
     pub market: Account<'info, Market>,
+
+    #[account(
+        mut,
+        close = owner,
+        seeds = [b"lock", RATE_LOCK_SELECTOR.as_bytes().as_ref(), job.index.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub lock: Account<'info, lock::Lock>,
 
     #[account(mut)]
     pub owner: Signer<'info>, // Owner must sign the transaction
