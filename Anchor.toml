@@ -3,11 +3,10 @@
 [features]
 resolution = true
 skip-lint = false
-# seeds = true
 
 [programs.localnet]
 market_v = "E87qEpEEcTk2bfN1CQqaC9qtm7zH7xCkSAm6qj6oaAcd"
-oyster_solana_contracts = "7iLD32W3pNCBX8op3V3Zv1KC5j5aRXkpPhVhWRPjXWGX"
+oyster-credits = "GSFiwh4mAcbaD2yCU1jZh8YxLLzCkM4snWPQaBtS6GvY"
 
 [registry]
 url = "https://api.apr.dev"
