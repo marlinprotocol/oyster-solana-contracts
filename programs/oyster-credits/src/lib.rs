@@ -220,7 +220,8 @@ pub struct RedeemAndBurn<'info> {
     pub usdc_mint: Account<'info, Mint>,
 
     #[account(
-        mut,
+        init_if_needed,
+        payer = signer,
         seeds = [b"program_usdc", usdc_mint.key().as_ref()],
         bump,
         token::mint = usdc_mint,
@@ -239,19 +240,19 @@ pub struct RedeemAndBurn<'info> {
     pub credit_mint: Account<'info, Mint>,
 
     #[account(
-        init_if_needed,
-        payer = signer,
+        mut,
         seeds = [b"credit_token", credit_mint.key().as_ref()],
         bump,
         token::mint = credit_mint,
-        token::authority = market_program_credit_token_account
+        token::authority = market_program_credit_token_account,
+        seeds::program = state.oyster_market
         // mut,
         // constraint = program_credit_token_account.owner == system_program.key()
     )]
     pub market_program_credit_token_account: Account<'info, TokenAccount>,
 
-    #[account(mut)]
-    pub user_credit_token_account: Account<'info, TokenAccount>,
+    // #[account(mut)]
+    // pub user_credit_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 

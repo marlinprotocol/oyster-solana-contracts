@@ -1,16 +1,11 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint};
-use oyster_credits::oyster_credits::redeem_and_burn;
-use oyster_credits::RedeemAndBurn;
-// use solana_program::keccak::hash;
+use oyster_credits::{cpi::accounts::RedeemAndBurn, program::OysterCredits};
 
-mod lock;
-
-declare_id!("E87qEpEEcTk2bfN1CQqaC9qtm7zH7xCkSAm6qj6oaAcd");
+declare_id!("DsrQF225MCwBNwKr4DiGFugyE9kwZ73wSPB2utjbvNUe");
 
 // Define EXTRA_DECIMALS as a constant
 const EXTRA_DECIMALS: u64 = 12; // Equivalent to 10^12
-const RATE_LOCK_SELECTOR: &str = "RATE_LOCK";
 
 #[program]
 pub mod market_v {
@@ -19,10 +14,10 @@ pub mod market_v {
     // Initialize the market
     pub fn initialize(
         ctx: Context<Initialize>,
-        selector: String,
-        wait_time: u64,
         admin: Pubkey,
-        notice_period: u64
+        notice_period: u64,
+        oyster_credit: Pubkey,
+        credit_mint: Pubkey
     ) -> Result<()> {
         let market = &mut ctx.accounts.market;
 
@@ -34,13 +29,11 @@ pub mod market_v {
         // market.token_mint = *ctx.accounts.token_program.to_account_info().key;
 
         // Set the job index counter
-        market.job_index = 0;
+        market.job_index = (u64::MAX as u128) << 64;
+        // market.job_index = 0;
         market.notice_period = notice_period;
-
-        // call update_lock_wait_time instruction to set the lock wait time
-        let lock_wait_time = &mut ctx.accounts.lock_wait_time;
-        // lock_wait_time.wait_time = wait_time;
-        lock::update_lock_wait_time_util(lock_wait_time, selector, wait_time)?;
+        market.oyster_credit = oyster_credit;
+        market.credit_mint = credit_mint;
 
         Ok(())
     }
@@ -154,19 +147,6 @@ pub mod market_v {
 
         // require_keys_eq!(ctx.accounts.token_mint.key(), market.token_mint, ErrorCodes::InvalidMint);
 
-        // // Transfer tokens from the owner to the job account
-        // let cpi_accounts = Transfer {
-        //     from: ctx.accounts.owner_token_account.to_account_info(),
-        //     to: ctx.accounts.job_token_account.to_account_info(),
-        //     authority: ctx.accounts.owner.to_account_info(),
-        // };
-        // let cpi_ctx = CpiContext::new(
-        //     ctx.accounts.token_program.to_account_info(),
-        //     cpi_accounts
-        // );
-        // token::transfer(cpi_ctx, balance)?;
-
-
         // Initialize the job
         job.index = market.job_index;
         job.metadata = metadata; // Now a String
@@ -207,7 +187,11 @@ pub mod market_v {
             &ctx.accounts.token_program,
             signer_seeds,
             rate,
-            market.notice_period
+            market.notice_period,
+            &ctx.accounts.owner,
+            &mut ctx.accounts.state,
+            &mut ctx.accounts.credit_program_usdc_token_account,
+            &ctx.accounts.credit_program,
         )?;
 
         emit!(JobOpened {
@@ -224,22 +208,13 @@ pub mod market_v {
     }
 
     // Settle a job
-    pub fn job_settle(ctx: Context<JobSettle>, job_index: u64) -> Result<()> {
+    pub fn job_settle(ctx: Context<JobSettle>, job_index: u128) -> Result<()> {
         require_keys_eq!(ctx.accounts.token_mint.key(), ctx.accounts.market.token_mint, ErrorCodes::InvalidMint);
 
         let token_mint_key = ctx.accounts.token_mint.key();
         let seeds: &[&[u8]] = &[b"job_token", token_mint_key.as_ref(), &[ctx.bumps.program_token_account]];
         let signer_seeds: &[&[&[u8]]] = &[&seeds[..]];
 
-        // Reuse the settle_job function
-        // utils_mod::settle_job(
-        //     &mut ctx.accounts.job,
-        //     &ctx.accounts.provider_token_account,
-        //     &ctx.accounts.job_token_account,
-        //     &ctx.accounts.market,
-        //     &ctx.accounts.token_program,
-        //     signer_seeds,
-        // )?;
         let current_time = Clock::get()?.unix_timestamp as u64;
 
         let job_rate = ctx.accounts.job.rate;
@@ -253,14 +228,18 @@ pub mod market_v {
             &mut ctx.accounts.provider_token_account,
             &ctx.accounts.credit_mint,
             &mut ctx.accounts.program_credit_token_account,
-            signer_seeds
+            signer_seeds,
+            &ctx.accounts.owner,
+            &mut ctx.accounts.state,
+            &mut ctx.accounts.credit_program_usdc_token_account,
+            &ctx.accounts.credit_program,
         )?;
 
         Ok(())
     }
 
     // Close a job
-    pub fn job_close(ctx: Context<JobClose>, job_index: u64) -> Result<()> {
+    pub fn job_close(ctx: Context<JobClose>, job_index: u128) -> Result<()> {
         let job = &mut ctx.accounts.job;
 
         // Ensure the caller is the owner of the job
@@ -288,7 +267,11 @@ pub mod market_v {
             &mut ctx.accounts.provider_token_account,
             &ctx.accounts.credit_mint,
             &mut ctx.accounts.program_credit_token_account,
-            token_signer_seeds
+            token_signer_seeds,
+            &ctx.accounts.owner,
+            &mut ctx.accounts.state,
+            &mut ctx.accounts.credit_program_usdc_token_account,
+            &ctx.accounts.credit_program,
         )?;
 
         // Close the job account and refund the rent to the owner
@@ -329,7 +312,7 @@ pub mod market_v {
     // Deposit tokens into a job
     pub fn job_deposit(
         ctx: Context<JobDeposit>,
-        job_index: u64, // Job index to identify the job
+        job_index: u128, // Job index to identify the job
         amount: u64,    // Amount of tokens to deposit
     ) -> Result<()> {
         let job = &mut ctx.accounts.job;
@@ -360,7 +343,11 @@ pub mod market_v {
             &mut ctx.accounts.provider_token_account,
             &ctx.accounts.credit_mint,
             &mut ctx.accounts.program_credit_token_account,
-            signer_seeds
+            signer_seeds,
+            &ctx.accounts.owner,
+            &mut ctx.accounts.state,
+            &mut ctx.accounts.credit_program_usdc_token_account,
+            &ctx.accounts.credit_program,
         )?;
         require!(res, ErrorCodes::InsufficientFundsToReviseRate);
 
@@ -383,7 +370,7 @@ pub mod market_v {
     // Withdraw tokens from a job
     pub fn job_withdraw(
         ctx: Context<JobWithdraw>,
-        job_index: u64, // Job index to identify the job
+        job_index: u128, // Job index to identify the job
         amount: u64,    // Amount of tokens to withdraw
     ) -> Result<()> {
         let job = &mut ctx.accounts.job;
@@ -421,7 +408,11 @@ pub mod market_v {
             &mut ctx.accounts.provider_token_account,
             &ctx.accounts.credit_mint,
             &mut ctx.accounts.program_credit_token_account,
-            token_signer_seeds
+            token_signer_seeds,
+            &ctx.accounts.owner,
+            &mut ctx.accounts.state,
+            &mut ctx.accounts.credit_program_usdc_token_account,
+            &ctx.accounts.credit_program,
         )?;
         require!(res, ErrorCodes::InsufficientFundsToReviseRate);
 
@@ -448,7 +439,7 @@ pub mod market_v {
 
     pub fn job_revise_rate(
         ctx: Context<JobReviseRate>,
-        job_index: u64, // Job index to identify the job
+        job_index: u128, // Job index to identify the job
         new_rate: u64,  // New rate to propose
     ) -> Result<()> {
         let token_mint_key = ctx.accounts.token_mint.key();
@@ -465,7 +456,11 @@ pub mod market_v {
             &ctx.accounts.token_program,
             signer_seeds,
             new_rate,
-            ctx.accounts.market.notice_period
+            ctx.accounts.market.notice_period,
+            &ctx.accounts.owner,
+            &mut ctx.accounts.state,
+            &mut ctx.accounts.credit_program_usdc_token_account,
+            &ctx.accounts.credit_program,
         )?;
 
         Ok(())
@@ -546,7 +541,11 @@ pub mod market_v {
             token_program: &Program<'info, Token>,
             signer_seeds: &[&[&[u8]]],
             new_rate: u64,
-            notice_period: u64
+            notice_period: u64,
+            signer: &Signer<'info>,
+            state: &mut UncheckedAccount<'info>,
+            credit_program_usdc_token_account: &mut UncheckedAccount<'info>,
+            credit_program: &Program<'info, OysterCredits>,
         ) -> Result<()> {
             require!(new_rate > 0, ErrorCodes::InvalidRate);
             require!(job.rate != new_rate, ErrorCodes::UnchangedRate);
@@ -565,7 +564,11 @@ pub mod market_v {
                     provider_token_account,
                     credit_mint,
                     program_credit_token_account,
-                    signer_seeds
+                    signer_seeds,
+                    signer,
+                    state,
+                    credit_program_usdc_token_account,
+                    credit_program,
                 )?;
                 require!(res, ErrorCodes::InsufficientFundsToReviseRate);
             }
@@ -589,7 +592,11 @@ pub mod market_v {
                 provider_token_account,
                 credit_mint,
                 program_credit_token_account,
-                signer_seeds
+                signer_seeds,
+                signer,
+                state,
+                credit_program_usdc_token_account,
+                credit_program,
             )?;
             require!(res, ErrorCodes::InsufficientFundsToReviseRate);
 
@@ -607,6 +614,10 @@ pub mod market_v {
             credit_mint: &Account<'info, Mint>,
             program_credit_token_account: &mut Account<'info, TokenAccount>,
             signer_seeds: &[&[&[u8]]],
+            signer: &Signer<'info>,
+            state: &mut UncheckedAccount<'info>,
+            credit_program_usdc_token_account: &mut UncheckedAccount<'info>,
+            credit_program: &Program<'info, OysterCredits>,
         ) -> Result<bool> {
             let last_settled = job.last_settled;
 
@@ -619,7 +630,6 @@ pub mod market_v {
             let amount_used = calculate_amount_used(rate, usage_duration);
             let settle_amount = amount_used.min(job.balance);
 
-            msg!("SETTLE_TOKENS------");
             settle_tokens(
                 job,
                 token_mint,
@@ -629,7 +639,11 @@ pub mod market_v {
                 program_credit_token_account,
                 token_program,
                 settle_amount,
-                signer_seeds
+                signer_seeds,
+                signer,
+                state,
+                credit_program_usdc_token_account,
+                credit_program,
             )?;
 
             job.last_settled = settle_till;
@@ -657,6 +671,10 @@ pub mod market_v {
             token_program: &Program<'info, Token>,
             amount: u64,
             signer_seeds: &[&[&[u8]]],
+            signer: &Signer<'info>,
+            state: &mut UncheckedAccount<'info>,
+            credit_program_usdc_token_account: &mut UncheckedAccount<'info>,
+            credit_program: &Program<'info, OysterCredits>,
         ) -> Result<()> {
             // Deduct the amount from the job's balance
             job.balance -= amount;
@@ -676,28 +694,24 @@ pub mod market_v {
                     job.credit_balance -= credit_amount;
 
                     // TODO: add cpi call to credit program
-                    // // Transfer credit tokens to the provider
-                    // let cpi_accounts = Transfer {
-                    //     from: program_credit_token_account.to_account_info(),
-                    //     to: provider_token_account.to_account_info(),
-                    //     authority: program_credit_token_account.to_account_info(),
-                    // };
-                    // let cpi_ctx = CpiContext::new(token_program.to_account_info(), cpi_accounts);
-                    // token::transfer(cpi_ctx, credit_amount)?;
                     // Perform a CPI call to the redeem_and_burn instruction in the oyster-credits program
-                    // let cpi_program = credit_mint.to_account_info();
-                    // let cpi_accounts = oyster_credits::RedeemAndBurn {
-                    //     // state: program_credit_token_account.to_account_info(),
-                    //     usdc_mint: *token_mint,
-                    //     // program_usdc_token_account: *program_token_account,
-                    //     user_usdc_token_account: *provider_token_account,
-                    //     // credit_mint: credit_mint.to_account_info(),
-                    //     // user_credit_token_account: program_credit_token_account.to_account_info(),
-                    //     // token_program: token_program.to_account_info(),
-                    //     // system_program: system_program.to_account_info(),
-                    // };
-                    // let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-                    // oyster_credits::cpi::redeem_and_burn(cpi_ctx, credit_amount)?;
+                    let cpi_program = credit_mint.to_account_info();
+                    let cpi_ctx = CpiContext::new(
+                        credit_program.to_account_info(),  // oyster_credits program ID
+                        RedeemAndBurn { 
+                            state: state.to_account_info(),
+                            signer: signer.to_account_info(),
+                            usdc_mint: token_mint.to_account_info(),
+                            program_usdc_token_account: credit_program_usdc_token_account.to_account_info(),
+                            user_usdc_token_account: provider_token_account.to_account_info(),
+                            credit_mint: credit_mint.to_account_info(),
+                            market_program_credit_token_account: program_credit_token_account.to_account_info(),
+                            // user_credit_token_account: ,
+                            token_program: token_program.to_account_info(),
+                            system_program: credit_program.to_account_info()
+                        }
+                    );
+                    oyster_credits::cpi::redeem_and_burn(cpi_ctx, credit_amount)?;
 
                     emit!(JobSettlementWithdrawn {
                         job: job.key(),
@@ -708,9 +722,7 @@ pub mod market_v {
                 }
             }
 
-            msg!("HEREEEE");
             if token_amount > 0 {
-                msg!("TRANSFERRING...{:?}", token_amount);
                 // Transfer tokens to the provider
                 let cpi_accounts = Transfer {
                     from: program_token_account.to_account_info(),
@@ -729,16 +741,10 @@ pub mod market_v {
                     provider: provider_token_account.owner,
                     amount: token_amount,
                 });
-                msg!("TRANSFER DONE!!!");
             }
 
             Ok(())
         }
-
-        // pub fn get_rate_lock_selector() -> [u8; 32] {
-        //     let hash_result = hash(b"RATE_LOCK");
-        //     hash_result.to_bytes()
-        // }
 
         pub fn deposit_token<'info>(
             job: &mut Account<'info, Job>,
@@ -750,7 +756,7 @@ pub mod market_v {
             program_token_account: &mut Account<'info, TokenAccount>,
             signer: &Signer<'info>,
             token_program: &Program<'info, Token>,
-            // job_index: u64,
+            // job_index: u128,
             amount: u64
         ) -> Result<()> {
             let mut token_amount = amount;
@@ -928,10 +934,11 @@ pub struct Provider {
 // Market state
 #[account]
 pub struct Market {
-    pub admin: Pubkey,      // Admin authority
-    pub token_mint: Pubkey, // Token mint address
-    pub credit_mint: Pubkey, // Credit mint address
-    pub job_index: u64,     // Job index counter
+    pub admin: Pubkey,          // Admin authority
+    pub oyster_credit: Pubkey,  // Oyster credit program address
+    pub token_mint: Pubkey,     // Token mint address
+    pub credit_mint: Pubkey,    // Credit mint address
+    pub job_index: u128,        // Job index counter
     pub notice_period: u64
 }
 
@@ -939,7 +946,7 @@ pub struct Market {
 #[account]
 #[derive(InitSpace)]
 pub struct Job {
-    pub index: u64,             // Job index
+    pub index: u128,             // Job index
     #[max_len(150)]
     pub metadata: String,       // Job metadata (now a String)
     pub owner: Pubkey,          // Job owner
@@ -952,7 +959,6 @@ pub struct Job {
 
 // Contexts
 #[derive(Accounts)]
-#[instruction(selector: String)]
 pub struct Initialize<'info> {
     #[account(
         init,
@@ -978,19 +984,6 @@ pub struct Initialize<'info> {
         token::authority = job_token_account
     )]
     pub job_token_account: Account<'info, TokenAccount>,
-
-    #[account(
-        init,
-        payer = admin,
-        // space = 8 + lock::LockWaitTime::INIT_SPACE,
-        space = 8 + std::mem::size_of::<lock::LockWaitTime>(),
-        // seeds = [b"lock_wait_time", selector.as_bytes().as_ref()],
-        // seeds = [&wait_time.to_le_bytes()],
-        seeds = [b"lock_wait_time", selector.as_bytes().as_ref()],
-        // seeds = [b"lock_wait_time"],
-        bump
-    )]
-    pub lock_wait_time: Account<'info, lock::LockWaitTime>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -1089,13 +1082,7 @@ pub struct JobOpen<'info> {
     pub owner: Signer<'info>,
 
     // #[account(mut)]
-    // pub token_mint: Account<'info, Mint>,
-
-    // #[account(mut)]
     // pub owner_token_account: Account<'info, TokenAccount>,
-
-    // #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
-    // pub job_token_account: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -1137,22 +1124,30 @@ pub struct JobOpen<'info> {
         // mut,
         // constraint = program_credit_token_account.owner == system_program.key()
     )]
-    pub program_credit_token_account: Account<'info, TokenAccount>,
+    pub program_credit_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         constraint = user_credit_token_account.owner == owner.key()
     )]
-    pub user_credit_token_account: Account<'info, TokenAccount>,
+    pub user_credit_token_account: Box<Account<'info, TokenAccount>>,
+
+    
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub state: UncheckedAccount<'info>,
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub credit_program_usdc_token_account: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
-
+    pub credit_program: Program<'info, OysterCredits>,
     pub system_program: Program<'info, System>,
 }
 
 // Context for settling a job
 #[derive(Accounts)]
-#[instruction(job_index: u64)]
+#[instruction(job_index: u128)]
 pub struct JobSettle<'info> {
     #[account(
         mut,
@@ -1202,13 +1197,21 @@ pub struct JobSettle<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub state: UncheckedAccount<'info>,
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub credit_program_usdc_token_account: UncheckedAccount<'info>,
+
+    pub credit_program: Program<'info, OysterCredits>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
 // Context for closing a job
 #[derive(Accounts)]
-#[instruction(job_index: u64)]
+#[instruction(job_index: u128)]
 pub struct JobClose<'info> { 
     #[account(
         mut,
@@ -1227,16 +1230,16 @@ pub struct JobClose<'info> {
     pub job: Box<Account<'info, Job>>,
 
     #[account(mut)]
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: Box<Account<'info, Mint>>,
 
     #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
-    pub program_token_account: Account<'info, TokenAccount>,
+    pub program_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         constraint = user_token_account.owner == job.owner,
     )]
-    pub user_token_account: Account<'info, TokenAccount>,
+    pub user_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
@@ -1271,13 +1274,21 @@ pub struct JobClose<'info> {
     #[account(mut)]
     pub owner: Signer<'info>, // Owner must sign the transaction
 
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub state: UncheckedAccount<'info>,
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub credit_program_usdc_token_account: UncheckedAccount<'info>,
+
+    pub credit_program: Program<'info, OysterCredits>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
 // Context for depositing into a job
 #[derive(Accounts)]
-#[instruction(job_index: u64, amount: u64)]
+#[instruction(job_index: u128, amount: u64)]
 pub struct JobDeposit<'info> {
     #[account(
         mut,
@@ -1300,13 +1311,13 @@ pub struct JobDeposit<'info> {
     pub token_mint: Box<Account<'info, Mint>>,
 
     #[account(mut)]
-    pub owner_token_account: Account<'info, TokenAccount>,
+    pub owner_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         constraint = provider_token_account.owner == job.provider,
     )]
-    pub provider_token_account: Account<'info, TokenAccount>,
+    pub provider_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub program_token_account: Account<'info, TokenAccount>,
@@ -1338,13 +1349,21 @@ pub struct JobDeposit<'info> {
     )]
     pub user_credit_token_account: Account<'info, TokenAccount>,
 
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub state: UncheckedAccount<'info>,
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub credit_program_usdc_token_account: UncheckedAccount<'info>,
+
+    pub credit_program: Program<'info, OysterCredits>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
 // Context for withdrawing from a job
 #[derive(Accounts)]
-#[instruction(job_index: u64, amount: u64)]
+#[instruction(job_index: u128, amount: u64)]
 pub struct JobWithdraw<'info> {
     #[account(
         mut,
@@ -1364,13 +1383,13 @@ pub struct JobWithdraw<'info> {
     pub owner: Signer<'info>,
 
     #[account(mut)]
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: Box<Account<'info, Mint>>,
 
     #[account(
         mut,
         constraint = provider_token_account.owner == job.provider,
     )]
-    pub provider_token_account: Account<'info, TokenAccount>,
+    pub provider_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"job_token", token_mint.key().as_ref()], bump)]
     pub program_token_account: Account<'info, TokenAccount>,
@@ -1402,13 +1421,21 @@ pub struct JobWithdraw<'info> {
     )]
     pub user_credit_token_account: Account<'info, TokenAccount>,
 
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub state: UncheckedAccount<'info>,
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub credit_program_usdc_token_account: UncheckedAccount<'info>,
+
+    pub credit_program: Program<'info, OysterCredits>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
 // Context for a job rate revision
 #[derive(Accounts)]
-#[instruction(job_index: u64)]
+#[instruction(job_index: u128)]
 pub struct JobReviseRate<'info> {
     #[account(
         mut,
@@ -1466,6 +1493,14 @@ pub struct JobReviseRate<'info> {
     )]
     pub program_credit_token_account: Account<'info, TokenAccount>,
 
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub state: UncheckedAccount<'info>,
+    /// CHECK: account is verified in credit program
+    #[account(mut)]
+    pub credit_program_usdc_token_account: UncheckedAccount<'info>,
+
+    pub credit_program: Program<'info, OysterCredits>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }

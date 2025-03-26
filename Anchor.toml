@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-market_v = "E87qEpEEcTk2bfN1CQqaC9qtm7zH7xCkSAm6qj6oaAcd"
+market_v = "DsrQF225MCwBNwKr4DiGFugyE9kwZ73wSPB2utjbvNUe"
 oyster-credits = "GSFiwh4mAcbaD2yCU1jZh8YxLLzCkM4snWPQaBtS6GvY"
 
 [registry]
