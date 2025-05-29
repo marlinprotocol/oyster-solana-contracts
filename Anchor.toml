@@ -5,8 +5,8 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-market_v = "DsrQF225MCwBNwKr4DiGFugyE9kwZ73wSPB2utjbvNUe"
-oyster-credits = "GSFiwh4mAcbaD2yCU1jZh8YxLLzCkM4snWPQaBtS6GvY"
+market_v = "5dk2pVaDQoUVK2tuNwQhoJHupwFd3q8iqZPkieMiwKoJ"
+oyster_credits = "5ngFsa5kHNM18VBaFo5qSus9ajSGsX92JpX9pfbBjCDJ"
 
 [registry]
 url = "https://api.apr.dev"

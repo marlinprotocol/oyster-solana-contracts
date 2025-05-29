@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer, Burn, MintTo};
 
-declare_id!("GSFiwh4mAcbaD2yCU1jZh8YxLLzCkM4snWPQaBtS6GvY");
+declare_id!("5ngFsa5kHNM18VBaFo5qSus9ajSGsX92JpX9pfbBjCDJ");
 
 #[program]
 pub mod oyster_credits {

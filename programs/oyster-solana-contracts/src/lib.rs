@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, Mint};
 use oyster_credits::{cpi::accounts::RedeemAndBurn, program::OysterCredits};
 
-declare_id!("DsrQF225MCwBNwKr4DiGFugyE9kwZ73wSPB2utjbvNUe");
+declare_id!("5dk2pVaDQoUVK2tuNwQhoJHupwFd3q8iqZPkieMiwKoJ");
 
 // Define EXTRA_DECIMALS as a constant
 const EXTRA_DECIMALS: u64 = 12; // Equivalent to 10^12
@@ -466,6 +466,38 @@ pub mod market_v {
         Ok(())
     }
 
+    pub fn job_metadata_update(
+        ctx: Context<JobMetadataUpdate>,
+        job_index: u128, // Job index to identify the job
+        new_metadata: String, // New metadata to set
+    ) -> Result<()> {
+        let job = &mut ctx.accounts.job;
+
+        // Ensure the job exists
+        require!(
+            job.owner != Pubkey::default(),
+            ErrorCodes::JobNotFound
+        );
+
+        // Ensure the caller is the job owner
+        require!(
+            job.owner == *ctx.accounts.owner.key,
+            ErrorCodes::Unauthorized
+        );
+
+        // check if the new_metadata is not same as the old one
+        require!(job.metadata != new_metadata, ErrorCodes::UnchangedMetadata);
+
+        // Update the metadata
+        job.metadata = new_metadata;
+
+        emit!(JobMetadataUpdated {
+            job: job.key(),
+            new_metadata: job.metadata.clone()
+        });
+
+        Ok(())
+    }
     mod utils_mod {
         use super::*;
 
@@ -947,7 +979,7 @@ pub struct Market {
 #[derive(InitSpace)]
 pub struct Job {
     pub index: u128,             // Job index
-    #[max_len(150)]
+    #[max_len(1500)]
     pub metadata: String,       // Job metadata (now a String)
     pub owner: Pubkey,          // Job owner
     pub provider: Pubkey,       // Job provider
@@ -1504,6 +1536,28 @@ pub struct JobReviseRate<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
+
+// Context for updating job metadata
+#[derive(Accounts)]
+#[instruction(job_index: u128)]
+pub struct JobMetadataUpdate<'info> {
+    #[account(
+        mut,
+        seeds = [b"market"],
+        bump
+    )]
+    pub market: Account<'info, Market>,
+
+    #[account(
+        mut,
+        seeds = [b"job", job_index.to_le_bytes().as_ref()], // Use job_index as seed
+        bump
+    )]
+    pub job: Account<'info, Job>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+}
 // Events
 #[event]
 pub struct ProviderAdded {
@@ -1580,6 +1634,12 @@ pub struct JobRateRevised {
     pub new_rate: u64,
 }
 
+#[event]
+pub struct JobMetadataUpdated {
+    pub job: Pubkey,
+    pub new_metadata: String,
+}
+
 // Error codes
 #[error_code]
 pub enum ErrorCodes {
@@ -1607,4 +1667,6 @@ pub enum ErrorCodes {
     InsufficientBalance,
     #[msg("Invalid mint")]
     InvalidMint,
+    #[msg("Unchanged metadata")]
+    UnchangedMetadata,
 }
